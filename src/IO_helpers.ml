@@ -8,7 +8,9 @@ let in_of_bytes ?(off=0) ?len s : In.t =
     ref (
       match len with
       | Some n ->
-        if n > Bytes.length s - off then invalid_arg "IO.in_of_bytes";
+        if n > Bytes.length s - off then (
+          invalid_arg "IO.in_of_bytes";
+        );
         n
       | None -> Bytes.length s - off
     )
@@ -29,12 +31,69 @@ let out_of_buffer buf : Out.t =
   let close() = () in
   Out.of_funs ~write ~write_char ~flush ~close ()
 
+type filename = string
+
+let with_in name f =
+  let fd = Unix.openfile name [Unix.O_RDONLY] 0o644 in
+  Fun.protect
+    ~finally:(fun() -> Unix.close fd)
+    (fun () -> f @@ In.of_unix_fd fd)
+
+let with_in_l names f =
+  let opened = ref [] in
+  Fun.protect
+    ~finally:(fun () -> List.iter Unix.close !opened)
+    (fun () ->
+       let l =
+         List.map
+         (fun name ->
+              let fd = Unix.openfile name [Unix.O_RDONLY] 0o644 in
+              opened := fd :: !opened;
+              In.of_unix_fd fd)
+           names
+       in
+       f l)
+
+let with_out name f =
+  let fd = Unix.openfile name [Unix.O_WRONLY; Unix.O_CREAT] 0o644 in
+  Fun.protect
+    ~finally:(fun() -> Unix.close fd)
+    (fun () ->
+       let oc = Out.of_unix_fd fd in
+       let x = f oc in
+       Out.flush oc;
+       x)
+
+let concat l0 =
+  let l = ref l0 in
+  let rec fill_buf () =
+    match !l with
+    | [] -> Bytes.empty, 0, 0
+    | ic :: tl ->
+      let bs, i, len = In.fill_buf ic in
+      if len = 0 then (
+        l := tl;
+        fill_buf ()
+      ) else (
+        bs, i, len
+      )
+  in
+  let close () = List.iter In.close l0
+  and consume n =
+    match !l with
+    | _ when n=0 -> ()
+    | ic :: _ -> In.consume ic n
+    | [] -> failwith "cannot consume empty `concat` stream"
+  in
+  In.of_funs ~consume ~fill_buf ~close ()
+
 let copy ic oc : unit =
   let continue = ref true in
   while !continue do
     let bs, i, len = In.fill_buf ic in
+    Printf.eprintf "copy: refill (i=%d, len=%d)\n%!" i len;
     if len = 0 then (
-      continue := false
+      continue := false;
     ) else (
       Out.write oc bs i len;
       In.consume ic len;
@@ -91,12 +150,14 @@ let map_c ?(buf_size=256) f (ic:In.t) : In.t =
     i := !i + n;
     len := !len - n;
   and fill_buf () =
+    assert (!len >= 0);
     if !len = 0 then (
       (* need to refill *)
-      len := 0;
       let bs1, i1, len1 = In.fill_buf ic in
+      Printf.eprintf "map_c: refill (i1=%d, len1=%d)\n%!" i1 len1;
       let len' = min len1 buf_size in
       Bytes.blit bs1 i1 buf 0 len';
+      In.consume ic len';
       for j=i1 to len' - 1 do
         Bytes.set buf j (f (Bytes.get buf j));
       done;

@@ -1,0 +1,6 @@
+
+(executables
+  (names multicat)
+  (libraries io)
+  (modes native)
+  (flags :standard -warn-error -a+8))

@@ -9,7 +9,17 @@ val in_of_string : ?off:int -> ?len:int -> string -> In.t
 val in_of_bytes : ?off:int -> ?len:int -> bytes -> In.t
 (** An input channel reading from the bytes buffer *)
 
+type filename = string
+
+val with_in : filename -> (In.t -> 'a) -> 'a
+val with_out : filename -> (Out.t -> 'a) -> 'a
+
+val with_in_l : filename list -> (In.t list -> 'a) -> 'a
+
 val out_of_buffer : Buffer.t -> Out.t
+
+val concat : In.t list -> In.t
+(** Read from each stream, in order *)
 
 val read_all : In.t -> string
 (** Input all the content into a string *)

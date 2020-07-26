@@ -112,25 +112,23 @@ module Out = struct
     let close() =
       flush();
       Unix.close fd
-    in
-    let write_char c =
+    and write_char c =
       if !b_len = bufsize then flush();
       Bytes.set buf !b_len c;
       incr b_len
-    in
-    let write bs i len : unit =
-      let continue = ref (len>0) in
-      while !continue do
+    and write bs i len : unit =
+      let len = ref len in
+      while !len > 0 do
         if !b_len = bufsize then flush (); (* make room *)
+        assert (!b_len < bufsize);
 
         let free_space = bufsize - !b_len in
-        let len' = min free_space len in (* how much can we write in one go? *)
-        if len' > 0 then (
-          Bytes.blit bs i buf !b_len len';
-          b_len := !b_len + len';
-        ) else (
-          continue := false
-        )
+        let nw = min free_space !len in (* how much can we write in one go? *)
+        Printf.eprintf "write: b-len=%d len=%d len'=%d\n%!" !b_len !len nw;
+        assert (nw>0);
+        Bytes.blit bs i buf !b_len nw;
+        b_len := !b_len + nw;
+        len := !len - nw;
       done
     in
     {write; write_char; flush; close}
