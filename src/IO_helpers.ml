@@ -165,15 +165,15 @@ let map_c ?(buf_size=256) f (ic:In.t) : In.t =
     assert (!len >= 0);
     if !len = 0 then (
       (* need to refill *)
+      i := 0;
       let bs1, i1, len1 = In.fill_buf ic in
       let len' = min len1 buf_size in
       Bytes.blit bs1 i1 buf 0 len';
       In.consume ic len';
-      for j=i1 to len' - 1 do
+      for j=0 to len' - 1 do
         Bytes.set buf j (f (Bytes.get buf j));
       done;
 
-      i := 0;
       len := len';
     );
     buf, !i, !len

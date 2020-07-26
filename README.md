@@ -21,3 +21,11 @@ hello\nworld\n🤗
 ```
 
 Note: `-zip` and `-unzip` don't seem to work yet.
+
+```sh
+$ cat src/IO_helpers.ml
+…
+$ ./multicat.sh src/IO_helpers.ml -rot13 -chunk | ./multicat.sh -unchunk | ./multicat.sh -rot13
+… # same as above
+
+```
