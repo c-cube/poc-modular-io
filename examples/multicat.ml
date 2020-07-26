@@ -1,32 +1,43 @@
 
+type op =
+  | Rot13
+  | Zip
+  | Unzip
+  | Chunk
+  | Unchunk
+
 let () =
-  let rot13 = ref false in
-  let zip = ref false in
-  let unzip = ref false in
+  let ops = ref [] in
+  let add_op o () = ops := o :: !ops in
   let stdin = ref false in
-  let chunk = ref false in
-  let unchunk = ref false in
   let out = ref [] in
   let opts = [
-    "-rot13", Arg.Set rot13, " rot13 \"encoding\"";
-    "-zip", Arg.Set zip, " zip compression";
-    "-unzip", Arg.Set unzip, " zip decompression";
-    "-chunk", Arg.Set chunk, " perform chunk encoding";
-    "-unchunk", Arg.Set unchunk, " perform chunk decoding";
+    "-rot13", Arg.Unit (add_op Rot13), " rot13 translation";
+    "-zip", Arg.Unit (add_op Zip), " zip compression";
+    "-unzip", Arg.Unit (add_op Unzip), " zip decompression";
+    "-chunk", Arg.Unit (add_op Chunk), " perform chunk encoding";
+    "-unchunk", Arg.Unit (add_op Unchunk), " perform chunk decoding";
     "-stdin", Arg.Set stdin, " read from stdin";
     "-o", Arg.String (fun f -> out := f :: !out), " output to this file";
   ] |> Arg.align in
   let files = ref [] in
-  Arg.parse opts (fun x -> files := x :: !files) "multicat [option*] [file]+";
+  Arg.parse opts (fun x -> files := x :: !files) "multicat [option*] [file]+\n\norder of options matters";
   IO_helpers.with_in_l (List.rev !files)
     (fun ic_l ->
        let ic_l = if !files=[] || !stdin then IO.In.of_unix_fd Unix.stdin :: ic_l else ic_l in
        let ic = IO_helpers.concat ic_l in
-       let ic = if !rot13 then IO_helpers.rot13 ic else ic in
-       let ic = if !chunk then IO_helpers.Chunked_encoding.encode ~chunk_size:32 ic else ic in
-       let ic = if !unchunk then IO_helpers.Chunked_encoding.decode ic else ic in
-       let ic = if !zip then IO_helpers.Gzip.encode ic else ic in
-       let ic = if !unzip then IO_helpers.Gzip.decode ic else ic in
+       let ic =
+         List.fold_left
+           (fun ic op ->
+              match op with
+              | Rot13 -> IO_helpers.rot13 ic
+              | Chunk -> IO_helpers.Chunked_encoding.encode ~chunk_size:32 ic
+              | Unchunk -> IO_helpers.Chunked_encoding.decode ic
+              | Zip -> IO_helpers.Gzip.encode ~buf_size:1024 ic
+              | Unzip -> IO_helpers.Gzip.decode ~buf_size:1024 ic
+           )
+           ic (List.rev !ops)
+       in
        let oc =
          match !out with
          | [] -> IO.Out.of_unix_fd ~bufsize:64 Unix.stdout
