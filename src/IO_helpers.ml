@@ -87,6 +87,18 @@ let concat l0 =
   in
   In.of_funs ~consume ~fill_buf ~close ()
 
+let tee l =
+  let write bs i len =
+    List.iter (fun oc -> IO.Out.write oc bs i len) l
+  and write_char c =
+    List.iter (fun oc -> IO.Out.write_char oc c) l
+  and close () =
+    List.iter IO.Out.close l
+  and flush () =
+    List.iter IO.Out.flush l
+  in
+  IO.Out.of_funs ~write_char ~write ~close ~flush ()
+
 let copy ic oc : unit =
   let continue = ref true in
   while !continue do

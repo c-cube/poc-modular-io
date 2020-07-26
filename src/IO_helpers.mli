@@ -21,6 +21,9 @@ val out_of_buffer : Buffer.t -> Out.t
 val concat : In.t list -> In.t
 (** Read from each stream, in order *)
 
+val tee : Out.t list -> Out.t
+(** Write to all outputs simultaneously *)
+
 val read_all : In.t -> string
 (** Input all the content into a string *)
 
