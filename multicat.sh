@@ -1,2 +1,2 @@
 #!/bin/sh
-exec dune exec examples/multicat.exe -- $@
+exec dune exec --display quiet examples/multicat.exe -- $@

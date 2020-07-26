@@ -117,6 +117,7 @@ module Out = struct
       Bytes.set buf !b_len c;
       incr b_len
     and write bs i len : unit =
+      let i = ref i in
       let len = ref len in
       while !len > 0 do
         if !b_len = bufsize then flush (); (* make room *)
@@ -125,7 +126,8 @@ module Out = struct
         let free_space = bufsize - !b_len in
         let nw = min free_space !len in (* how much can we write in one go? *)
         assert (nw>0);
-        Bytes.blit bs i buf !b_len nw;
+        Bytes.blit bs !i buf !b_len nw;
+        i := !i + nw;
         b_len := !b_len + nw;
         len := !len - nw;
       done
