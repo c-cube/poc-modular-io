@@ -124,7 +124,6 @@ module Out = struct
 
         let free_space = bufsize - !b_len in
         let nw = min free_space !len in (* how much can we write in one go? *)
-        Printf.eprintf "write: b-len=%d len=%d len'=%d\n%!" !b_len !len nw;
         assert (nw>0);
         Bytes.blit bs i buf !b_len nw;
         b_len := !b_len + nw;

@@ -91,7 +91,6 @@ let copy ic oc : unit =
   let continue = ref true in
   while !continue do
     let bs, i, len = In.fill_buf ic in
-    Printf.eprintf "copy: refill (i=%d, len=%d)\n%!" i len;
     if len = 0 then (
       continue := false;
     ) else (
@@ -154,7 +153,6 @@ let map_c ?(buf_size=256) f (ic:In.t) : In.t =
     if !len = 0 then (
       (* need to refill *)
       let bs1, i1, len1 = In.fill_buf ic in
-      Printf.eprintf "map_c: refill (i1=%d, len1=%d)\n%!" i1 len1;
       let len' = min len1 buf_size in
       Bytes.blit bs1 i1 buf 0 len';
       In.consume ic len';
