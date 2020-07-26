@@ -1,0 +1,6 @@
+
+(library
+  (name io)
+  (public_name io)
+  (flags :standard -warn-error -a+8)
+  (libraries unix camlzip))
