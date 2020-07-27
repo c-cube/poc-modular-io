@@ -330,8 +330,9 @@ module Gzip = struct
           try
             let finished, used_in, used_out =
               Zlib.inflate zlib_str
+                ib ioff ilen
                 buf 0 (Bytes.length buf)
-                ib ioff ilen Zlib.Z_SYNC_FLUSH
+                Zlib.Z_SYNC_FLUSH
             in
             In.consume ic used_in;
             write_offset := 0;
