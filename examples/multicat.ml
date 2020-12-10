@@ -40,11 +40,11 @@ let () =
          List.fold_left
            (fun (ic,oc) op ->
               match op with
-              | Rot13 -> IO_helpers.rot13 ic, oc
-              | Chunk -> ic, IO_helpers.Chunked_encoding.encode ~chunk_size:32 oc
-              | Unchunk -> IO_helpers.Chunked_encoding.decode ic, oc
-              | Zip -> ic, IO_helpers.Gzip.encode ~buf_size:1024 oc
-              | Unzip -> IO_helpers.Gzip.decode ~buf_size:1024 ic, oc
+              | Rot13 -> Rot13.map_in ic, oc
+              | Chunk -> ic, Chunked_encoding.encode ~chunk_size:32 oc
+              | Unchunk -> Chunked_encoding.decode ic, oc
+              | Zip -> ic, IO_gzip.encode ~buf_size:1024 oc
+              | Unzip -> IO_gzip.decode ~buf_size:1024 ic, oc
            )
            (ic,oc) (List.rev !ops)
        in

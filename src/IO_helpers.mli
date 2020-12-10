@@ -33,8 +33,7 @@ val read_lines: In.t -> string list
 
 val map_c : ?buf_size:int -> (char -> char) -> In.t -> In.t
 
-val rot13 : ?buf_size:int -> In.t -> In.t
-(** An example of {!map_c} *)
+val map_out_c : (char -> char) -> Out.t -> Out.t
 
 val read_at_most : close_rec:bool -> int -> In.t -> In.t
 (** [read_at_most n ic] behaves like [ic] but stops after reading at
@@ -47,25 +46,3 @@ val read_all_into : In.t -> Buffer.t -> unit
 
 val copy : In.t -> Out.t -> unit
 
-module Chunked_encoding : sig
-  val encode : ?chunk_size:int -> Out.t -> Out.t
-  (** Encode the written data as chunks.
-      Each chunk is written as [<n>\r\n<n bytes>\r\n] where [<n>] is
-      a hexadecimal representation of the number of bytes that follows.
-      see https://tools.ietf.org/html/rfc7230#section-4.1 *)
-
-  val decode : In.t -> In.t
-  (** Read a chunk-encoded stream *)
-
-  val encode_in : ?chunk_size:int -> In.t -> In.t
-  (** Reader version of !{decode}, to transform an input stream into a chunked
-      one *)
-end
-
-module Gzip : sig
-  val decode : ?buf_size:int -> In.t -> In.t
-
-  val encode : ?buf_size:int -> Out.t -> Out.t
-
-  val encode_in : ?buf_size:int -> In.t -> In.t
-end
