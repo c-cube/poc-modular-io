@@ -109,7 +109,8 @@ let copy ic oc : unit =
       Out.write oc bs i len;
       In.consume ic len;
     )
-  done
+  done;
+  Out.flush oc
 
 let read_line (ic:In.t) : string option =
   (* find index of [c] in slice, or raise [Not_found] *)
@@ -225,7 +226,51 @@ let read_all ic =
   Buffer.contents buf
 
 module Chunked_encoding = struct
-  let encode ?(chunk_size=4_096) ic : In.t =
+  let encode ?(chunk_size=4_096) oc : Out.t =
+    let buf = Bytes.create chunk_size in
+    let len = ref 0 in
+    let write_header n =
+      let header = Printf.sprintf "%x\r\n" n in
+      Out.write_string oc header;
+    in
+    (* write the content of [buf] as a chunk *)
+    let flush () =
+      if !len > 0 then (
+        write_header !len;
+        Out.write oc buf 0 !len;
+        len := 0;
+        Out.write_string oc "\r\n";
+      );
+      Out.flush oc
+    in
+    let rec write buf2 i2 len2 =
+      let n2 = min (chunk_size - !len) len2 in (* how much of [buf2] we can actually consume *)
+      let size_chunk = !len + n2 in
+      if size_chunk > 0 then (
+        write_header size_chunk;
+        if !len > 0 then (
+          Out.write oc buf 0 !len;
+          len := 0;
+        );
+        Out.write oc buf2 i2 n2;
+        Out.write_string oc "\r\n";
+        (write[@tailcall]) buf2 (i2 + n2) (len2 - n2);
+      )
+    in
+    let close () =
+      flush ();
+      Out.write_string oc "0\r\n"; (* empty chunk *)
+      Out.flush oc;
+      Out.close oc
+    and write_char c =
+      if !len = chunk_size then flush();
+      assert (!len < chunk_size);
+      Bytes.set buf !len c;
+      incr len
+    in
+    Out.of_funs ~write_char ~write ~flush ~close ()
+
+  let encode_in ?(chunk_size=4_096) ic : In.t =
     let buf = Bytes.create (chunk_size+2) in (* have space for chunk+\r\n *)
     (* state machine: writing header, or writing chunk *)
     let writing_header = ref true in
@@ -298,8 +343,7 @@ module Chunked_encoding = struct
       assert (n <= !n_missing);
       n_missing := !n_missing - n;
       In.consume ic n
-    and close () = In.close ic
-    in
+    and close () = In.close ic in
     In.of_funs ~consume ~close ~fill_buf ()
 end
 
@@ -347,7 +391,59 @@ module Gzip = struct
     in
     In.of_funs ~fill_buf ~consume ~close ()
 
-  let encode ?(buf_size=4096 * 32) (ic:In.t) : In.t =
+  let encode ?(buf_size=4096 * 32) (oc:Out.t) : Out.t =
+    let w_buf = Bytes.create buf_size in
+    let w_len = ref 0 in
+    let buf0 = Bytes.create 1 in
+    let zlib_str = Zlib.deflate_init 4 false in
+
+    let rec write buf i len =
+      if len > 0 then (
+        assert (!w_len <= buf_size);
+        if !w_len = buf_size then (
+          (* need to make room *)
+          Out.write oc w_buf 0 !w_len;
+          w_len := 0;
+        );
+        let _end, used_in, written =
+          Zlib.deflate zlib_str
+            buf i len
+            w_buf !w_len (buf_size - !w_len)
+            Zlib.Z_NO_FLUSH
+        in
+        w_len := !w_len + written;
+        write buf (i + used_in) (len - used_in)
+      )
+    in
+    let flush () =
+      if !w_len > 0 then (
+        Out.write oc w_buf 0 !w_len;
+        w_len := 0;
+      );
+      let rec flush_loop () =
+        let _finished, _used_in, used_out =
+          Zlib.deflate zlib_str
+            buf0 0 0
+            w_buf 0 buf_size
+            Zlib.Z_FULL_FLUSH
+        in
+        if used_out > 0 then (
+          Out.write oc w_buf 0 used_out;
+          flush_loop()
+        )
+      in
+      flush_loop();
+      Out.flush oc;
+    and write_char c =
+      Bytes.set buf0 0 c;
+      write buf0 0 1
+    and close() =
+      Zlib.deflate_end zlib_str;
+      Out.close oc
+    in
+    Out.of_funs ~write_char ~write ~flush ~close ()
+
+  let encode_in ?(buf_size=4096 * 32) (ic:In.t) : In.t =
     let refill = ref true in
     let buf = Bytes.create buf_size in
     let buf_len = ref 0 in

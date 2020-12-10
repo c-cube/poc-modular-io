@@ -26,18 +26,6 @@ let () =
     (fun ic_l ->
        let ic_l = if !files=[] || !stdin then IO.In.of_unix_fd Unix.stdin :: ic_l else ic_l in
        let ic = IO_helpers.concat ic_l in
-       let ic =
-         List.fold_left
-           (fun ic op ->
-              match op with
-              | Rot13 -> IO_helpers.rot13 ic
-              | Chunk -> IO_helpers.Chunked_encoding.encode ~chunk_size:32 ic
-              | Unchunk -> IO_helpers.Chunked_encoding.decode ic
-              | Zip -> IO_helpers.Gzip.encode ~buf_size:1024 ic
-              | Unzip -> IO_helpers.Gzip.decode ~buf_size:1024 ic
-           )
-           ic (List.rev !ops)
-       in
        let oc =
          match !out with
          | [] -> IO.Out.of_unix_fd ~bufsize:64 Unix.stdout
@@ -48,7 +36,20 @@ let () =
              l
            |> IO_helpers.tee
        in
+       let ic, oc =
+         List.fold_left
+           (fun (ic,oc) op ->
+              match op with
+              | Rot13 -> IO_helpers.rot13 ic, oc
+              | Chunk -> ic, IO_helpers.Chunked_encoding.encode ~chunk_size:32 oc
+              | Unchunk -> IO_helpers.Chunked_encoding.decode ic, oc
+              | Zip -> ic, IO_helpers.Gzip.encode ~buf_size:1024 oc
+              | Unzip -> IO_helpers.Gzip.decode ~buf_size:1024 ic, oc
+           )
+           (ic,oc) (List.rev !ops)
+       in
        IO_helpers.copy ic oc;
        IO.Out.flush oc;
+       IO.Out.close oc;
     );
   ()
