@@ -34,7 +34,7 @@ $ cat src/IO_helpers.ml
 $ ./multicat.sh src/IO_helpers.ml -rot13 -chunk
 … # content, but less readable
 
-$ ./multicat.sh src/IO_helpers.ml -rot13 -chunk -unchunk -rot13
+$ ./multicat.sh src/IO_helpers.ml -rot13 -chunk | ./multicat.sh -unchunk -rot13
 … # initial content of the file
 
 ```
