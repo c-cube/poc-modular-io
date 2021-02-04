@@ -91,6 +91,11 @@ let encode ?(buf_size=4096 * 32) (oc:Out.t) : Out.t =
     Bytes.set buf0 0 c;
     write buf0 0 1
   and close() =
+    ignore @@ Zlib.deflate zlib_str
+      buf0 0 0
+      w_buf 0 buf_size
+      Zlib.Z_FINISH
+    ;
     Zlib.deflate_end zlib_str;
     Out.close oc
   in
