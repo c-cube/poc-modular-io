@@ -1,8 +1,12 @@
 # poc-modular-io
 
+[![build](https://github.com/c-cube/poc-modular-io/actions/workflows/main.yml/badge.svg)](https://github.com/c-cube/poc-modular-io/actions/workflows/main.yml)
+
 proof of concept for https://github.com/ocaml/RFCs/pull/19
 
 ## Examples
+
+The `multicat.sh` tool is like `cat`, but provides options to encode/decode various things.
 
 ```sh
 $ echo "hello\nworld\n🤗" > foo
@@ -12,7 +16,7 @@ uryyb\ajbeyq\a🤗
 uryyb\ajbeyq\a🤗
 uryyb\ajbeyq\a🤗
 
-$ ./multicat.sh foo foo foo -rot13 > bar
+$ ./multicat.sh foo foo foo -rot13 > bar  # save it into a file
 
 $ ./multicat.sh bar -rot13 -rot13 -rot13  # triple decode!
 hello\nworld\n🤗
@@ -41,4 +45,4 @@ $ ./multicat.sh src/IO_helpers.ml -rot13 -chunk | ./multicat.sh -unchunk -rot13
 
 ## Bugs
 
-`-zip` and `-unzip` don't seem to work yet, I am not familiar enough with camlzip.
+`-zip` and `-unzip` don't work yet, I haven't updated them.
