@@ -1,2 +1,3 @@
 #!/bin/sh
-exec dune exec --display quiet examples/multicat.exe -- $@
+dune build --display quiet examples/multicat.exe 2>/dev/null || true
+exec ./_build/default/examples/multicat.exe $@

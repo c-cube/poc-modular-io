@@ -1,160 +1,195 @@
-
-
-type 'a or_error = ('a, exn) result
-
-(* tiny internal buffer implementation *)
-module MiniBuf = struct
-  type t = {
-    mutable bytes: bytes;
-    mutable len: int; (* slice is [bytes[0..len]] *)
-  }
-
-  let create ?(size=4_096) () : t =
-    { bytes=Bytes.create size; len=0 }
-
-  let size self = self.len
-  let bytes_slice self = self.bytes
-  let clear self : unit =
-    if Bytes.length self.bytes > 4_096 * 1_024 then (
-      self.bytes <- Bytes.create 4096; (* really big buffer, free it *)
-    );
-    self.len <- 0
-
-  let resize self new_size : unit =
-    let new_buf = Bytes.create new_size in
-    Bytes.blit self.bytes 0 new_buf 0 self.len;
-    self.bytes <- new_buf
-
-  let ensure self new_size : unit =
-    (* need to resize? *)
-    if new_size >= Bytes.length self.bytes then (
-      (* amortized *)
-      let new_cap =
-        min Sys.max_string_length (new_size + self.len / 2 + 10)
-      in
-      if new_cap < new_size then failwith "maximum bytes size exceeded";
-      resize self new_cap;
-    )
-
-  let add_bytes (self:t) s i len : unit =
-    ensure self (self.len + len); (* resize if needed? *)
-    Bytes.blit s i self.bytes self.len len;
-    self.len <- self.len + len
-
-  let contents (self:t) : string = Bytes.sub_string self.bytes 0 self.len
-end
-
 module In = struct
   type t = {
-    fill_buf:unit -> bytes * int * int;
-    consume:int -> unit;
-    close:unit -> unit;
-    seek_and_pos: ((int -> unit) * (unit -> int)) option;
+    input: bytes -> int -> int -> int;
+    close: unit -> unit;
+    as_fd: unit -> Unix.file_descr option;
   }
 
-  let of_unix_fd ?(bufsize=4096) fd : t =
-    let buf = Bytes.create bufsize in
-    let i = ref 0 in
-    let len = ref 0 in
+  let create ?(as_fd = fun _ -> None) ?(close = ignore) ~input () : t =
+    { as_fd; close; input }
 
-    let consume n = i := !i + n in
-    let fill_buf () =
-      if !i >= !len then (
-        i := 0;
-        len := Unix.read fd buf 0 (Bytes.length buf);
-      );
-      buf, !i, !len - !i
+  let of_in_channel ?(close_noerr = false) (ic : in_channel) : t =
+    {
+      input = (fun buf i len -> input ic buf i len);
+      close =
+        (fun () ->
+          if close_noerr then
+            close_in_noerr ic
+          else
+            close_in ic);
+      as_fd = (fun () -> Some (Unix.descr_of_in_channel ic));
+    }
+
+  let of_unix_fd ?(close_noerr = false) (fd : Unix.file_descr) : t =
+    {
+      input = (fun buf i len -> Unix.read fd buf i len);
+      as_fd = (fun () -> Some fd);
+      close =
+        (fun () ->
+          if close_noerr then (
+            try Unix.close fd with _ -> ()
+          ) else
+            Unix.close fd);
+    }
+
+  (** Read into the given slice.
+      @return the number of bytes read, [0] means end of input. *)
+  let[@inline] input (self : t) buf i len = self.input buf i len
+
+  let input_into_buf (self : t) (buf : Buf.t) : unit =
+    let n = self.input buf.bytes 0 (Bytes.length buf.bytes) in
+    buf.len <- n
+
+  (** Close the channel. *)
+  let[@inline] close self : unit = self.close ()
+
+  let seek self i : unit =
+    match self.as_fd () with
+    | Some fd -> ignore (Unix.lseek fd (Int64.to_int i) Unix.SEEK_SET : int)
+    | None -> raise (Sys_error "cannot seek")
+
+  (* TODO: find how to do that from a FD *)
+  let pos _self : int64 = raise (Sys_error "cannot get pos")
+end
+
+(** Buffered channel *)
+module In_buffered = struct
+  type t = {
+    mutable buf: Buf.t;
+    mutable off: int;
+    fill_buffer: t -> int;
+    close: unit -> unit;
+  }
+
+  let[@inline] get_bytes self = self.buf.bytes
+  let[@inline] get_off self = self.off
+  let[@inline] get_len self = Buf.size self.buf - self.off
+
+  (** Make sure [self.buf] is not empty if [ic] is not empty *)
+  let fill_buffer (self : t) : unit =
+    if get_len self <= 0 then (
+      Buf.clear self.buf;
+      self.off <- self.fill_buffer self
+    )
+
+  let create ?(buf = Buf.create ()) ?(close = ignore) ~fill_buffer () : t =
+    { buf; off = 0; close; fill_buffer }
+
+  let input self b i len : int =
+    fill_buffer self;
+    let n_available = Buf.size self.buf - self.off in
+    if n_available > 0 then (
+      let n = min len n_available in
+      Bytes.blit self.buf.bytes self.off b i n;
+      self.off <- self.off + n;
+      n
+    ) else
+      0
+
+  let[@inline] fill_and_get self =
+    fill_buffer self;
+    get_bytes self, get_off self, get_len self
+
+  let consume self n =
+    assert (n <= get_len self);
+    self.off <- self.off + n
+
+  let close self = self.close ()
+
+  let of_in ?buf ic : t =
+    let close () = In.close ic in
+    let fill_buffer self : int =
+      assert (Buf.size self.buf = 0);
+      In.input_into_buf ic self.buf;
+      0
     in
-    let seek i = ignore (Unix.lseek fd i Unix.SEEK_SET : int) in
-    let pos () = Unix.lseek fd 0 Unix.SEEK_CUR in
-    let close () = Unix.close fd in
-    { consume; close; fill_buf; seek_and_pos=Some((seek,pos)) }
+    create ?buf ~close ~fill_buffer ()
 
-  let of_funs ~consume ~fill_buf ~close ?seek_and_pos () : t =
-    {consume; fill_buf; close; seek_and_pos}
-
-  let[@inline] fill_buf self = self.fill_buf()
-  let[@inline] close self = self.close()
-  let[@inline] consume self n = self.consume n
-
-  let[@inline] seek self n =
-    match self.seek_and_pos with
-    | None -> Error (Failure "seek not available")
-    | Some (s,_) -> Ok (s n)
-
-  let[@inline] pos self =
-    match self.seek_and_pos with
-    | None -> Error (Failure "pos not available")
-    | Some (_,p) -> Ok (p ())
+  let into_in (self : t) : In.t =
+    let input b i len = input self b i len in
+    let close () = close self in
+    In.create ~close ~input ()
 end
 
 module Out = struct
   type t = {
-    write_char : char -> unit;
-    write: bytes -> int -> int -> unit;
-    flush: unit -> unit;
-    close: unit -> unit;
+    output_char: char -> unit;  (** Output a single char *)
+    output: bytes -> int -> int -> unit;  (** Output slice *)
+    flush: unit -> unit;  (** Flush underlying buffer *)
+    close: unit -> unit;  (** Close the output. Must be idempotent. *)
+    as_fd: unit -> Unix.file_descr option;
   }
 
-  let of_unix_fd ?(bufsize=4096) fd : t =
-    let buf = Bytes.create bufsize in
-    let b_len = ref 0 in
+  let create ?(as_fd = fun () -> None) ?(flush = ignore) ?(close = ignore)
+      ~output_char ~output () : t =
+    { as_fd; flush; close; output_char; output }
 
-    (* really write content *)
-    let flush () =
-      let i = ref 0 in
-      while !i < !b_len do
-        let nw = Unix.single_write fd buf !i (!b_len - !i) in
-        i := !i + nw
-      done;
-      b_len := 0
-    in
-    let close() =
-      flush();
-      Unix.close fd
-    and write_char c =
-      if !b_len = bufsize then flush();
-      Bytes.set buf !b_len c;
-      incr b_len
-    and write bs i len : unit =
-      let i = ref i in
-      let len = ref len in
-      while !len > 0 do
-        if !b_len = bufsize then flush (); (* make room *)
-        assert (!b_len < bufsize);
+  (** [of_out_channel oc] wraps the channel into a {!Out_channel.t}.
+      @param close_noerr if true, then closing the result uses [close_out_noerr]
+      instead of [close_out] to close [oc] *)
+  let of_out_channel ?(close_noerr = false) (oc : out_channel) : t =
+    {
+      output_char = (fun c -> output_char oc c);
+      output = (fun buf i len -> output oc buf i len);
+      flush = (fun () -> flush oc);
+      close =
+        (fun () ->
+          if close_noerr then
+            close_out_noerr oc
+          else
+            close_out oc);
+      as_fd = (fun () -> Some (Unix.descr_of_out_channel oc));
+    }
 
-        let free_space = bufsize - !b_len in
-        let nw = min free_space !len in (* how much can we write in one go? *)
-        assert (nw>0);
-        Bytes.blit bs !i buf !b_len nw;
-        i := !i + nw;
-        b_len := !b_len + nw;
-        len := !len - nw;
-      done
-    in
-    {write; write_char; flush; close}
+  let of_unix_fd fd : t = of_out_channel (Unix.out_channel_of_descr fd)
 
-  let of_funs ~write_char ~write ~flush ~close () : t =
-    { write; write_char; flush; close }
+  (** [of_buffer buf] is an output channel that writes directly into [buf].
+        [flush] and [close] have no effect. *)
+  let of_buffer (buf : Buffer.t) : t =
+    {
+      output_char = Buffer.add_char buf;
+      output = Buffer.add_subbytes buf;
+      flush = ignore;
+      close = ignore;
+      as_fd = (fun () -> None);
+    }
 
-  let[@inline] write self bs i len = self.write bs i len
-  let[@inline] write_char self c = self.write_char c
-  let[@inline] close self = self.close ()
-  let[@inline] flush self = self.flush ()
+  (** Output the buffer slice into this channel *)
+  let[@inline] output_char (self : t) c : unit = self.output_char c
 
-  let write_bytes self b = write self b 0 (Bytes.length b)
+  (** Output the buffer slice into this channel *)
+  let[@inline] output (self : t) buf i len : unit = self.output buf i len
 
-  let write_string self s = write_bytes self (Bytes.unsafe_of_string s)
+  let[@inline] output_string (self : t) (str : string) : unit =
+    self.output (Bytes.unsafe_of_string str) 0 (String.length str)
 
-  let write_int self i =
+  (** Close the channel. *)
+  let[@inline] close self : unit = self.close ()
+
+  (** Flush (ie. force write) any buffered bytes. *)
+  let[@inline] flush self : unit = self.flush ()
+
+  let seek self i : unit =
+    match self.as_fd () with
+    | Some fd -> ignore (Unix.lseek fd (Int64.to_int i) Unix.SEEK_SET : int)
+    | None -> raise (Sys_error "cannot seek")
+
+  (* TODO: do it from fd *)
+  let pos _self : int64 = raise (Sys_error "cannot get pos")
+
+  let output_buf (self : t) (buf : Buf.t) : unit =
+    let b = Buf.bytes_slice buf in
+    output self b 0 (Buf.size buf)
+
+  let output_int self i =
     let s = string_of_int i in
-    write_string self s
+    output_string self s
 
-  let write_lines self seq =
+  let output_lines self seq =
     Seq.iter
       (fun s ->
-        write_string self s;
-        write_char self '\n')
+        output_string self s;
+        output_char self '\n')
       seq
 
   (* etc. *)
